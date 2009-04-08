@@ -72,26 +72,31 @@ tag_id3_getstring(const struct id3_frame *frame, unsigned i)
 
 /* This will try to convert a string to utf-8,
  */
-static id3_utf8_t * processID3FieldString (int is_id3v1, const id3_ucs4_t *ucs4, int type)
+static id3_utf8_t * processID3FieldString (int is_id3v1, const id3_ucs4_t *ucs4, int type, enum id3_field_textencoding id3_encoding)
 {
 	id3_utf8_t *utf8, *utf8_stripped;
-	id3_latin1_t *isostr;
+	id3_utf8_t *isostr;
 	const char *encoding;
 
 	if (type == TAG_ITEM_GENRE)
 		ucs4 = id3_genre_name(ucs4);
 	/* use encoding field here? */
-	if (is_id3v1 &&
-	    (encoding = config_get_string(CONF_ID3V1_ENCODING, NULL)) != NULL) {
-		isostr = id3_ucs4_latin1duplicate(ucs4);
+	if ((encoding = config_get_string(CONF_ID3V1_ENCODING, NULL)) != NULL) {
+		if(!is_id3v1 && (id3_encoding == ID3_FIELD_TEXTENCODING_UTF_16 || id3_encoding == ID3_FIELD_TEXTENCODING_UTF_8))
+			isostr = id3_ucs4_utf8duplicate(ucs4);
+		else
+			isostr = (id3_utf8_t*)id3_ucs4_latin1duplicate(ucs4);
 		if (G_UNLIKELY(!isostr)) {
 			return NULL;
 		}
 
-		utf8 = (id3_utf8_t *)
+                if(id3_encoding == 0xff || id3_encoding == ID3_FIELD_TEXTENCODING_ISO_8859_1) {
+                utf8 = (id3_utf8_t *)
 			g_convert_with_fallback((const char*)isostr, -1,
-						encoding, "utf-8",
+						"utf-8", encoding,
 						NULL, NULL, NULL, NULL);
+                } else
+                        utf8 = (id3_utf8_t *) g_strdup((const char*)isostr);
 		if (utf8 == NULL) {
 			g_debug("Unable to convert %s string to UTF-8: '%s'",
 				encoding, isostr);
@@ -120,6 +125,7 @@ getID3Info(struct id3_tag *tag, const char *id, int type, struct tag *mpdTag)
 	id3_utf8_t *utf8;
 	union id3_field const *field;
 	unsigned int nstrings, i;
+	enum id3_field_textencoding id3_encoding = 0xff;
 
 	frame = id3_tag_findframe(tag, id, 0);
 	/* Check frame */
@@ -158,7 +164,8 @@ getID3Info(struct id3_tag *tag, const char *id, int type, struct tag *mpdTag)
 		{
 			g_debug("Expected encoding, found: %i",
 				field->type);
-		}
+		} else
+                        id3_encoding = field->number.value;
 		/* Process remaining fields, should be only one */
 		field = &frame->fields[1];
 		/* Encoding field */
@@ -169,7 +176,7 @@ getID3Info(struct id3_tag *tag, const char *id, int type, struct tag *mpdTag)
 				ucs4 = id3_field_getstrings(field,i);
 				if(!ucs4)
 					continue;
-				utf8 = processID3FieldString(isId3v1(tag),ucs4, type);
+				utf8 = processID3FieldString(isId3v1(tag),ucs4, type, id3_encoding);
 				if(!utf8)
 					continue;
 
@@ -201,7 +208,7 @@ getID3Info(struct id3_tag *tag, const char *id, int type, struct tag *mpdTag)
 				ucs4 = id3_field_getfullstring(field);
 				if(ucs4)
 				{
-					utf8 = processID3FieldString(isId3v1(tag),ucs4, type);
+					utf8 = processID3FieldString(isId3v1(tag),ucs4, type, id3_encoding);
 					if(utf8)
 					{
 						tag_add_item(mpdTag, type, (char *)utf8);
